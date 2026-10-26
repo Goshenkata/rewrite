@@ -17,15 +17,25 @@ package org.openrewrite.rpc;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.module.paramnames.ParameterNamesModule;
+import io.moderne.jsonrpc.JsonRpcSuccess;
+import io.moderne.jsonrpc.RawJson;
+import io.moderne.jsonrpc.formatter.JsonMessageFormatter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.openrewrite.Checksum;
 import org.openrewrite.FileAttributes;
 import org.openrewrite.Tree;
 import org.openrewrite.marker.BuildTool;
 import org.openrewrite.marker.Markers;
+import org.openrewrite.rpc.request.GetObjectResponse;
 import org.openrewrite.text.PlainText;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.time.ZonedDateTime;
 import java.util.*;
@@ -175,6 +185,27 @@ class RpcReceiveQueueTest {
         assertThat(after.getCreationTime()).isEqualTo(created);
         assertThat(requireNonNull(after.getCreationTime()).getZone()).isEqualTo(created.getZone());
         assertThat(after.getCreationTime().getNano()).isEqualTo(123456789);
+    }
+
+    @ParameterizedTest
+        @ValueSource(longs = {0, 42, 2147483647L, 2147483648L})
+    void fileAttributeSizeRoundTripsThroughJson(long size) throws IOException {
+        FileAttributes before = new FileAttributes(null, null, null, true, true, false, 100);
+        FileAttributes expected = before.withSize(size);
+        sq.send(expected, before, null);
+
+        JsonMessageFormatter formatter = new JsonMessageFormatter(new ParameterNamesModule());
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        formatter.serialize(new JsonRpcSuccess(1, RawJson.of(
+          batches.stream().flatMap(List::stream).collect(toList()))), output);
+        JsonRpcSuccess response = (JsonRpcSuccess) formatter.deserialize(
+          new ByteArrayInputStream(output.toByteArray()));
+        batches.clear();
+        batches.addLast(response.getResult(GetObjectResponse.class));
+
+        FileAttributes actual = rq.receive(before);
+
+        assertThat(actual).isEqualTo(expected);
     }
 
     @Test
